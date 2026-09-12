@@ -20,8 +20,9 @@ Covers the two StateMachine-side scenarios from the action=None bug:
 
 import torch
 
-from matterix_sm import StateMachine, TurnOnHeaterCfg, WaitCfg
-from matterix_sm.scene_data import SceneData
+from matterix_sm import MoveRelativeCfg, StateMachine, TurnOnHeaterCfg
+from matterix_sm.robot_action_spaces import FRANKA_IK_ACTION_SPACE
+from matterix_sm.scene_data import ArticulationData, SceneData
 
 
 def test_pure_semantic_sequence_returns_none_action():
@@ -83,17 +84,39 @@ def test_mixed_sequence_returns_hold_tensor_during_initial_semantic_step():
             TurnOnHeaterCfg(asset_name="ika_plate", value=True),
             # Not a realistic workflow ordering, but validates the fallback scan sees
             # "robot" from anywhere in the full action list, not just the current step.
-            WaitCfg(duration=0.01, agent_assets="robot"),
+            # A genuine motion action (not WaitCfg) with the real Franka action space,
+            # so the fallback hold tensor's shape/values are actually representative.
+            MoveRelativeCfg(
+                agent_assets="robot",
+                position_offset=(0.05, 0.0, 0.0),
+                action_space_info=FRANKA_IK_ACTION_SPACE,
+            ),
         ]
     )
     sm.reset()
-    # Fallback initialization only runs once scene_data is available.
-    sm.scene_data = SceneData(articulations={}, rigid_objects={})
+    # Fallback initialization only runs once scene_data is available. MoveRelativeCfg
+    # needs the robot's current EE pose to compute its target, so this stub must carry
+    # a real (if arbitrary) pose rather than the empty dict used by the other tests.
+    sm.scene_data = SceneData(
+        articulations={
+            "robot": ArticulationData(
+                root_pos_w=torch.zeros(2, 3),
+                root_quat_w=torch.tensor([[0.0, 0.0, 0.0, 1.0]] * 2),
+                joint_pos=torch.zeros(2, 9),
+                joint_vel=torch.zeros(2, 9),
+                ee_pos_w=torch.zeros(2, 3),
+                ee_quat_w=torch.tensor([[0.0, 0.0, 0.0, 1.0]] * 2),
+            )
+        },
+        rigid_objects={},
+    )
 
     action, semantic_actions = sm.step(obs=None)
 
     assert action is not None, "a later robot action in the sequence must give a hold tensor, not None"
     assert isinstance(action, torch.Tensor)
-    assert action.shape[0] == 2
+    assert action.shape == (2, FRANKA_IK_ACTION_SPACE.total_dim), (
+        f"expected the real Franka action shape (2, {FRANKA_IK_ACTION_SPACE.total_dim}), got {tuple(action.shape)}"
+    )
     assert semantic_actions is not None
     assert semantic_actions[0].value is True
