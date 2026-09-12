@@ -44,8 +44,10 @@ parser.add_argument(
     "--max_episodes",
     type=int,
     default=None,
-    help="Stop after this many episodes and exit normally, instead of running forever. "
-    "Useful for automated/CI invocations. Default: unlimited (runs until the app is closed).",
+    help=(
+        "Stop after this many episodes and exit normally, instead of running forever. "
+        "Useful for automated/CI invocations. Default: unlimited (runs until the app is closed)."
+    ),
 )
 parser.add_argument("--record_video", action="store_true", default=False, help="Record a video of each episode.")
 parser.add_argument(

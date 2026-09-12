@@ -54,17 +54,16 @@ args_cli = parser.parse_args()
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
+import gymnasium as gym
 import sys
-
 import torch
 
-import gymnasium as gym
-
 import matterix_tasks  # noqa: F401  registers gym envs
-from isaaclab.managers.action_manager import ActionManager
-from isaaclab_tasks.utils import parse_env_cfg
 from matterix.managers.semantics.primitive_semantics.heat_transfer.is_heater_on import IsHeaterOn
 from matterix_sm.semantic_info import SemanticInfo
+
+from isaaclab.managers.action_manager import ActionManager
+from isaaclab_tasks.utils import parse_env_cfg
 
 
 def main() -> int:
