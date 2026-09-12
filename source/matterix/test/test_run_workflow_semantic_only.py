@@ -10,10 +10,18 @@ pure-semantic (no agent_assets anywhere) workflow without crashing on
 This launches scripts/run_workflow.py as a real subprocess (it does its own
 AppLauncher/Isaac Sim startup) against the "heater_only" workflow on
 Matterix-Test-Semantics-Heat-Transfer-Franka-v1, which is composed entirely of
-TurnOnHeaterCfg steps. scripts/run_workflow.py's main loop runs forever
-(``while simulation_app.is_running()``), re-running episodes indefinitely in
-headless mode, so this test runs it for a bounded window and checks the
-captured output rather than waiting for it to exit on its own.
+TurnOnHeaterCfg steps.
+
+scripts/run_workflow.py's main loop runs forever by default (``while
+simulation_app.is_running()``), so this test uses its ``--max_episodes`` flag
+to make the runner stop and exit *on its own* after 2 episodes - the minimum
+needed to prove the reset-and-repeat cycle works, not just that it ran once.
+subprocess.communicate(timeout=...) enforces the overall timeout regardless
+of whether output is flowing (unlike a manual proc.stdout.readline() loop,
+which blocks indefinitely if the process goes quiet without producing more
+lines), and the test asserts the process exited normally with code 0 -
+proving the run actually completed successfully, rather than "we saw some
+promising output before we force-killed it."
 
 Usage::
 
@@ -23,7 +31,6 @@ Usage::
 import os
 import subprocess
 import sys
-import time
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 RUN_WORKFLOW = os.path.join(REPO_ROOT, "scripts", "run_workflow.py")
@@ -31,7 +38,7 @@ RUN_WORKFLOW = os.path.join(REPO_ROOT, "scripts", "run_workflow.py")
 TASK = "Matterix-Test-Semantics-Heat-Transfer-Franka-v1"
 WORKFLOW = "heater_only"
 TIMEOUT_S = 90
-MIN_EPISODES_OBSERVED = 2  # proves the inner step loop completed more than once without crashing
+MAX_EPISODES = 2  # minimum needed to prove the reset-and-repeat cycle works, not just a single run
 
 
 def main() -> int:
@@ -45,6 +52,8 @@ def main() -> int:
         "--headless",
         "--num_envs",
         "2",
+        "--max_episodes",
+        str(MAX_EPISODES),
     ]
     print(f"[test] launching: {' '.join(cmd)}")
 
@@ -54,45 +63,32 @@ def main() -> int:
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
-        bufsize=1,
     )
 
-    output_lines: list[str] = []
-    episode_count = 0
-    deadline = time.time() + TIMEOUT_S
+    timed_out = False
     try:
-        while time.time() < deadline:
-            line = proc.stdout.readline()
-            if not line:
-                if proc.poll() is not None:
-                    break
-                continue
-            print(line, end="")
-            output_lines.append(line)
-            if line.startswith("EPISODE"):
-                episode_count += 1
-                if episode_count >= MIN_EPISODES_OBSERVED:
-                    break
-    finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=15)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(timeout=15)
+        output, _ = proc.communicate(timeout=TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        proc.kill()
+        output, _ = proc.communicate(timeout=15)
 
-    output = "".join(output_lines)
+    print(output)
+
+    episode_count = output.count("\nEPISODE ")
 
     results = {
+        "did_not_time_out": not timed_out,
+        "exited_normally": proc.returncode == 0,
         "no_traceback": "Traceback (most recent call last)" not in output,
         "no_nonetype_to_crash": "'NoneType' object has no attribute 'to'" not in output,
-        "reached_min_episodes": episode_count >= MIN_EPISODES_OBSERVED,
+        "ran_expected_episode_count": episode_count == MAX_EPISODES,
     }
 
     print("\n=== RESULTS ===")
     for k, v in results.items():
         print(f"{k}: {'PASS' if v else 'FAIL'}")
-    print(f"episodes_observed: {episode_count}")
+    print(f"episodes_observed: {episode_count}, returncode: {proc.returncode}")
 
     if not all(results.values()):
         print("\nFAILURES - see captured output above")
